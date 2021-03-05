@@ -124,6 +124,10 @@ def get_num_bytes_src_to_dst(connection):
     return num_bytes
 
 
+def get_duration(connection):
+    return get_end_time(connection) - get_start_time(connection)
+
+
 def get_num_bytes_dst_to_src(connection):
     num_bytes = 0
     packets = get_dst_to_src(connection)
@@ -141,6 +145,57 @@ def format_timestamp(time):
     if m == 0:
         return "{:02f}s".format(s)
     return "{:2d}m {:02f}s".format(m, s)
+
+
+def get_min_time(connections):
+    min_time = get_duration(connections[0])
+    for connection in connections:
+        if get_duration(connection) < min_time:
+            min_time = get_duration(connection)
+    return min_time
+
+
+def get_mean_time(connections):
+    total = 0
+    for connection in connections:
+        total += get_duration(connection)
+    return total / len(connections)
+
+
+def get_max_time(connections):
+    max_time = get_duration(connections[0])
+    for connection in connections:
+        if get_duration(connection) > max_time:
+            max_time = get_duration(connection)
+    return max_time
+
+
+def get_min_rtt(connections):
+    min_rtt = connections[0]["packets"][0].RTT_value
+    for connection in connections:
+        for packet in connection["packets"]:
+            if packet.RTT_value < min_rtt:
+                min_rtt = packet.RTT_value
+    return min_rtt
+
+
+def get_mean_rtt(connections):
+    total = 0
+    num_packets = 0
+    for connection in connections:
+        for packet in connection["packets"]:
+            total += packet.RTT_value
+            num_packets += 1
+    return total / num_packets
+
+
+def get_max_rtt(connections):
+    max_rtt = connections[0]["packets"][0].RTT_value
+    for connection in connections:
+        for packet in connection["packets"]:
+            if packet.RTT_value > max_rtt:
+                max_rtt = packet.RTT_value
+    return max_rtt
 
 
 class IP_Header:
@@ -534,7 +589,7 @@ with open("./sample-capture-file.cap", "rb") as f:
                 + int(get_num_bytes_dst_to_src(connection)),
             )
             print("END")
-            if connection_num is not len(connections):
+            if connection_num != len(connections):
                 print("+++++++++++++++++++++++++++++++++")
         if connection["RST"] > 0:
             num_reset_connections += 1
@@ -557,13 +612,17 @@ with open("./sample-capture-file.cap", "rb") as f:
 
     print("D) Complete TCP connections: ")
     print()
-    print("Minimum time duration: ")  # TODO: Add details
-    print("Mean time duration: ")  # TODO: Add details
-    print("Maximum time duration: ")  # TODO: Add details
+    print(
+        "Minimum time duration: ", format_timestamp(get_min_time(complete_connections))
+    )
+    print("Mean time duration: ", format_timestamp(get_mean_time(complete_connections)))
+    print(
+        "Maximum time duration: ", format_timestamp(get_max_time(complete_connections))
+    )
     print()
-    print("Minimum RTT value: ")  # TODO: Add details
-    print("Mean RTT value: ")  # TODO: Add details
-    print("Maximum RTT value: ")  # TODO: Add details
+    print("Minimum RTT value: ", get_min_rtt(complete_connections)) # TODO: FIX THIS
+    print("Mean RTT value: ", get_mean_rtt(complete_connections)) # TODO: FIX THIS
+    print("Maximum RTT value: ", get_max_rtt(complete_connections)) # TODO: FIX THIS
     print()
     print(
         "Minimum number of packets including both send/received: ",
