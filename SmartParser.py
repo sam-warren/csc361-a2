@@ -99,16 +99,16 @@ def get_status(connection):
     return status
 
 
-def get_start_time(connection):  # TODO: FIX THIS
+def get_start_time(connection):
     for p in connection["packets"]:
-        if p.TCP_header.flags["SYN"] is 1:
+        if p.TCP_header.flags["SYN"] == 1:
             return p.timestamp
 
 
-def get_end_time(connection):  # TODO: FIX THIS
+def get_end_time(connection):
     last_fin = None
     for p in connection["packets"]:
-        if p.TCP_header.flags["FIN"] is 1:
+        if p.TCP_header.flags["FIN"] == 1:
             last_fin = p
     return last_fin.timestamp
 
@@ -133,6 +133,14 @@ def get_num_bytes_dst_to_src(connection):
         )
         num_bytes += payload
     return num_bytes
+
+
+def format_timestamp(time):
+    m = int(time % 3600 // 60)
+    s = time % 3600 % 60
+    if m == 0:
+        return "{:02f}s".format(s)
+    return "{:2d}m {:02f}s".format(m, s)
 
 
 class IP_Header:
@@ -330,11 +338,11 @@ class packet:
         self.packet_length = 0
         self.packet_orig_length = 0
 
-    def timestamp_set(self, buffer1, buffer2, orig_time):
-        seconds = struct.unpack("I", buffer1)[0]
-        microseconds = struct.unpack("<I", buffer2)[0]
-        self.timestamp = round(seconds + microseconds * 0.000001 - orig_time, 6)
-        # print(self.timestamp,self.packet_No)
+    def timestamp_set(self, buffer1, buffer2, orig_sec, orig_usec):
+        secs = struct.unpack("I", buffer1)[0]
+        usecs = struct.unpack("<I", buffer2)[0]
+        orig_time = orig_sec + orig_usec * 0.000001
+        self.timestamp = round(secs + usecs * 0.000001 - orig_time, 6)
 
     def packet_No_set(self, number):
         self.packet_No = number
@@ -351,6 +359,9 @@ class packet:
 
 packets = []
 packet_number = 0
+orig_sec = None
+orig_usec = None
+firstPacket = True
 
 connections = []
 
@@ -371,9 +382,12 @@ with open("./sample-capture-file.cap", "rb") as f:
             SYN = 0
             FIN = 0
             RST = 0
-            orig_time = struct.unpack("I", ts_sec)[0]
-            p.timestamp_set(ts_sec, ts_usec, orig_time)
+            if firstPacket:
+                orig_sec = struct.unpack("I", ts_sec)[0]
+                orig_usec = struct.unpack("I", ts_usec)[0]
+            p.timestamp_set(ts_sec, ts_usec, orig_sec, orig_usec)
 
+            firstPacket = False
             packet_length = struct.unpack("I", incl_len)[0]
             packet_orig_len = struct.unpack("I", orig_len)[0]
             p.set_packet_length(packet_length, packet_orig_len)
@@ -414,11 +428,11 @@ with open("./sample-capture-file.cap", "rb") as f:
                 packet_data[tcp_start_index + 15 : tcp_start_index + 16],
             )
 
-            if p.TCP_header.flags["SYN"] is 1:
+            if p.TCP_header.flags["SYN"] == 1:
                 SYN = 1
-            if p.TCP_header.flags["FIN"] is 1:
+            if p.TCP_header.flags["FIN"] == 1:
                 FIN = 1
-            if p.TCP_header.flags["RST"] is 1:
+            if p.TCP_header.flags["RST"] == 1:
                 RST = 1
 
             # Fetch details for 4-tuple
@@ -488,9 +502,12 @@ with open("./sample-capture-file.cap", "rb") as f:
         print("Status: ", get_status(connection))
         if connection["SYN"] > 0 and connection["FIN"] > 0:  # Connection is complete
             complete_connections.append(connection)
-            print("Start Time: ", get_start_time(connection))
-            print("End Time: ", get_end_time(connection))
-            print("Duration: ", get_end_time(connection) - get_start_time(connection))
+            print("Start Time: ", format_timestamp(get_start_time(connection)))
+            print("End Time: ", format_timestamp(get_end_time(connection)))
+            print(
+                "Duration: ",
+                format_timestamp(get_end_time(connection) - get_start_time(connection)),
+            )
             print(
                 "Number of packets sent from Source to Destination: ",
                 len(get_src_to_dst(connection)),
