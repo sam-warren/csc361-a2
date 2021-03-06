@@ -1,4 +1,5 @@
 import struct
+import sys
 
 # PACKETS
 
@@ -15,7 +16,7 @@ def get_mean_packets(connections):
     num_packets = 0
     for connection in connections:
         num_packets += len(connection["packets"])
-    return num_packets / len(connections)
+    return round(num_packets / len(connections), 6)
 
 
 def get_max_packets(connections):
@@ -45,7 +46,7 @@ def get_mean_window_size(connections):
         for packet in connection["packets"]:
             mean_window_size += packet.TCP_header.window_size
             num_packets += 1
-    return mean_window_size / num_packets
+    return round(mean_window_size / num_packets, 6)
 
 
 def get_max_window_size(connections):
@@ -159,7 +160,7 @@ def get_mean_time(connections):
     total = 0
     for connection in connections:
         total += get_duration(connection)
-    return total / len(connections)
+    return round(total / len(connections), 6)
 
 
 def get_max_time(connections):
@@ -179,23 +180,44 @@ def get_rtt_pairs(connections):
         client_to_server = get_src_to_dst(connection)
         server_to_client = get_dst_to_src(connection)
         for client_packet in client_to_server:
-            if client_packet.data_length > 0:
-                for server_packet in server_to_client:
+            for server_packet in server_to_client:
+                if client_packet.data_length > 0:
                     if (
-                        server_packet.ack_num
-                        == client_packet.seq_num + client_packet.data_length
+                        server_packet.TCP_header.ack_num
+                        == client_packet.TCP_header.seq_num + client_packet.data_length
                     ):
                         packet_pairs.append([client_packet, server_packet])
-            elif client_packet.TCP_header.flags["SYN"] == 1:
-                for server_packet in server_to_client:
-                    if server_packet.ack_num == client_packet.seq_num + 1:
-                        packet_pairs.append([client_packet, server_packet])
-            elif client_packet.TCP_header.flags["FIN"] == 1:
-                for server_packet in server_to_client:
-                    if server_packet.ack_num == client_packet.seq_num + 1:
-                        packet_pairs.append([client_packet, server_packet])
+                        break
+                elif client_packet.data_length == 0:
+                    if client_packet.TCP_header.flags["SYN"] == 1 or client_packet.TCP_header.flags["FIN"] == 1:
+                        if client_packet.TCP_header.seq_num + 1 == server_packet.TCP_header.ack_num:
+                            packet_pairs.append([client_packet, server_packet])
+                            break
     return packet_pairs
 
+def get_min_rtt(connections):
+    packet_pairs = get_rtt_pairs(connections)
+    min_rtt = packet_pairs[0][0].get_RTT_value(packet_pairs[0][1])
+    for pair in packet_pairs:
+        if pair[0].get_RTT_value(pair[1]) < min_rtt:
+            min_rtt = pair[0].get_RTT_value(pair[1])
+    return min_rtt
+
+
+def get_mean_rtt(connections):
+    total = 0
+    packet_pairs = get_rtt_pairs(connections)
+    for pair in packet_pairs:
+        total += pair[0].get_RTT_value(pair[1])
+    return round(total / len(packet_pairs), 6)
+
+def get_max_rtt(connections):
+    packet_pairs = get_rtt_pairs(connections)
+    max_rtt = packet_pairs[0][0].get_RTT_value(packet_pairs[0][1])
+    for pair in packet_pairs:
+        if pair[0].get_RTT_value(pair[1]) > max_rtt:
+            max_rtt = pair[0].get_RTT_value(pair[1])
+    return max_rtt
 
 class IP_Header:
     src_ip = None  # <type 'str'>
@@ -379,6 +401,7 @@ class packet:
     packet_orig_length = 0
     packet_data = None
     buffer = None
+    data_length = 0
 
     def __init__(self):
         self.IP_header = IP_Header()
@@ -391,6 +414,7 @@ class packet:
         self.buffer = None
         self.packet_length = 0
         self.packet_orig_length = 0
+        self.data_length = 0
 
     def timestamp_set(self, buffer1, buffer2, orig_sec, orig_usec):
         secs = struct.unpack("I", buffer1)[0]
@@ -405,10 +429,14 @@ class packet:
     def set_packet_length(self, incl_len, orig_len):
         self.packet_length = incl_len
         self.packet_orig_length = orig_len
+    
+    def get_data_length(self):
+        self.data_length = self.IP_header.total_len - self.IP_header.ip_header_len - self.TCP_header.data_offset
 
     def get_RTT_value(self, p):
         rtt = p.timestamp - self.timestamp
         self.RTT_value = round(rtt, 8)
+        return round(rtt, 8)
 
 
 packets = []
@@ -419,7 +447,11 @@ firstPacket = True
 
 connections = []
 
-with open("./sample-capture-file.cap", "rb") as f:
+if(len(sys.argv) != 2):
+    print("ERROR: Invalid arguments. SmartParser accepts exactly one argument: the trace file in the same directory to be parsed.")
+    sys.exit()
+
+with open(sys.argv[1], "rb") as f:
     global_header = f.read(24)  # We don't do anything with this
     while True:
         # For each packet
@@ -481,7 +513,8 @@ with open("./sample-capture-file.cap", "rb") as f:
                 packet_data[tcp_start_index + 14 : tcp_start_index + 15],
                 packet_data[tcp_start_index + 15 : tcp_start_index + 16],
             )
-
+            p.get_data_length()
+    
             if p.TCP_header.flags["SYN"] == 1:
                 SYN = 1
             if p.TCP_header.flags["FIN"] == 1:
@@ -619,9 +652,10 @@ with open("./sample-capture-file.cap", "rb") as f:
         "Maximum time duration: ", format_timestamp(get_max_time(complete_connections))
     )
     print()
-    print("Minimum RTT value: ", get_min_rtt(complete_connections))  # TODO: FIX THIS
-    print("Mean RTT value: ", get_mean_rtt(complete_connections))  # TODO: FIX THIS
-    print("Maximum RTT value: ", get_max_rtt(complete_connections))  # TODO: FIX THIS
+    # print("RTT PAIRS: ", get_rtt_pairs(complete_connections))
+    print("Minimum RTT value: " + str(get_min_rtt(complete_connections)) + "s")
+    print("Mean RTT value: " + str(get_mean_rtt(complete_connections)) + "s")
+    print("Maximum RTT value: " + str(get_max_rtt(complete_connections)) + "s")
     print()
     print(
         "Minimum number of packets including both send/received: ",
